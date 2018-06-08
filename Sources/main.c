@@ -55,9 +55,9 @@ bool response_ready = false;
 bool command_sent = false;
 unsigned int state_step = 0u;
 unsigned int delay_state_counter = 0u;
+unsigned int gps_state_counter = CYCLES_SEC * 5;
 char expectedResponse[BUFFER_SIZE] = "";
 unsigned int state = STARTUP;
-
 
 unsigned char PULSE_SRC_val = 0;
 char sendBuffer[BUFFER_SIZE] = "";
@@ -89,7 +89,7 @@ static inline void __disable_irq(void) {
 void cleanBuffer(char* buffer, unsigned int buff_size) {
 	int i;
 	for (i = 0; i < buff_size; i++) {
-		buffer[i] = ' ';
+		buffer[i] = '\0';
 	}
 }
 void UART2_IRQHandler() {
@@ -101,23 +101,22 @@ void UART2_IRQHandler() {
 		recvBuffer[recvBufferPos] = UART2_D;
 		recvBufferPos++;
 		recvBufferSize++;
-		
+
 		if (strstr(recvBuffer, expectedResponse) != NULL) {
 			response_ready = true;
-			recvBuffer[recvBufferPos] = 'x';
 		}
 	}
 }
 
 void sendAtCommand(char* message, unsigned int len) {
 	unsigned int i;
+	strcpy(sendBuffer, message);
 	for (i = 0; i < len; i++) {
 		while (!(UART2_S1 & 0x80)) {
 		} /* wait for transmit buffer empty */
 		UART2_D = message[i]; /* send a char */
 	}
 }
-
 
 /* initialize UART2 to transmit and receive at 9600 Baud */
 void UART2_init(void) {
@@ -206,8 +205,9 @@ void Led_and_Accel_Init(void) {
 	GPIOB_PDDR |= (1 << 18);		//Port Data Direction Register (GPIOx_PDDR)
 	GPIOB_PDDR |= (1 << 19);
 	GPIOD_PDDR |= (1 << 1);
-	
-	LED_ALL_OFF;
+
+	LED_ALL_OFF
+	;
 }
 
 /******************************************************************************
@@ -246,7 +246,7 @@ void Accel_Config(void) {
  ******************************************************************************/
 void PORTA_IRQHandler() {
 	PORTA_PCR14 |= PORT_PCR_ISF_MASK;			// Clear the interrupt flag
-	state = GPS;
+	state = CALL;
 }
 
 /******************************************************************************
@@ -261,6 +261,7 @@ void transitionNextStateStep(unsigned int next_state, unsigned int step) {
 	recvBufferPos = 0;
 	recvBufferSize = 0;
 	cleanBuffer(recvBuffer, BUFFER_SIZE);
+	strcpy(expectedResponse, "\r\nOK\r\n");
 }
 
 void getSignalQualityStateMachine() {
@@ -300,8 +301,8 @@ void GPSrequestStateMachine() {
 		switch (state_step) {
 		case 0:
 			/* Change LED Color */
-			LED_PURPLE_OFF
-			LED_RED_ON
+			LED_ALL_OFF
+			LED_YELLOW_ON
 			response_ready = false;
 			sendAtCommand("AT+CGNSINF\r\n", strlen("AT+CGNSINF\r\n"));
 			command_sent = true;
@@ -318,8 +319,8 @@ void GPSrequestStateMachine() {
 			/*Return to IDLE */
 			token = strtok(recvBuffer, ",");
 			token = strtok(NULL, ",");
-			
-			if(atoi(token)){
+
+			if (atoi(token)) {
 				token = strtok(NULL, ",");
 				token = strtok(NULL, ",");
 				strcpy(latitude, token);
@@ -327,11 +328,11 @@ void GPSrequestStateMachine() {
 				strcpy(longitude, token);
 				new_gps_data = true;
 				transitionNextStateStep(HTTP_SEND, 0);
-			}else{
-				transitionNextStateStep(GPS, 0);
+			} else {
+				transitionNextStateStep(IDLE, 0);
 			}
-			
-			LED_RED_OFF
+
+			LED_ALL_OFF
 			LED_PURPLE_ON
 			break;
 
@@ -345,40 +346,57 @@ void HTTPrequestStateMachine() {
 		switch (state_step) {
 		case 0:
 			/* Change LED Color */
-			LED_PURPLE_OFF
-			LED_RED_ON
+			LED_ALL_OFF
+			LED_CIAN_ON
 			response_ready = false;
-			sendAtCommand("AT+HTTPPARA=\"CID\",1\r\n", strlen("AT+HTTPPARA=\"CID\",1\r\n"));
+			sendAtCommand("AT+HTTPPARA=\"CID\",1\r\n",
+					strlen("AT+HTTPPARA=\"CID\",1\r\n"));
 			command_sent = true;
 			break;
 		case 1:
-					/* Change LED Color */
-			LED_PURPLE_OFF
-			LED_RED_ON
+
 			response_ready = false;
-			sendAtCommand("AT+HTTPPARA=\"URL\",\"http://ptsv2.com/t/frwfq-1528404493/post?SM=true\"\r\n", 
-						strlen("AT+HTTPPARA=\"URL\",\"http://ptsv2.com/t/frwfq-1528404493/post?SM=true\"\r\n"));
+			sendAtCommand(
+					"AT+HTTPPARA=\"URL\",\"http://ptsv2.com/t/9gt8l-1528492807/post\"\r\n",
+					strlen(
+							"AT+HTTPPARA=\"URL\",\"http://ptsv2.com/t/9gt8l-1528492807/post\"\r\n"));
 			command_sent = true;
 			break;
 		case 2:
-			/* Change LED Color */
-			LED_PURPLE_OFF
-			LED_RED_ON
+
 			response_ready = false;
-			sendAtCommand("AT+HTTPACTION=0\r\n", strlen("AT+HTTPACTION=0\r\n"));
+			sendAtCommand("AT+HTTPPARA=\"CONTENT\",\"application/json\"\r\n",
+					strlen("AT+HTTPPARA=\"CONTENT\",\"application/json\"\r\n"));
 			command_sent = true;
 			break;
 		case 3:
-			/* Change LED Color */
-			LED_PURPLE_OFF
-			LED_RED_ON
+
 			response_ready = false;
-			
-			sendAtCommand("AT+HTTPREAD\r\n", strlen("AT+HTTPREAD\r\n"));
+			int latitude_size = strlen(latitude);
+			int longitude_size = strlen(longitude);
+			cleanBuffer(sendBuffer, BUFFER_SIZE);
+			sprintf(sendBuffer, "AT+HTTPDATA=%d,10000\r\n",
+					(latitude_size + longitude_size));
+			sendAtCommand(sendBuffer, strlen(sendBuffer));
 			command_sent = true;
+			strcpy(expectedResponse, "DOWNLOAD");
+			break;
+		case 4:
+			response_ready = false;
+			cleanBuffer(sendBuffer, BUFFER_SIZE);
+			sprintf(sendBuffer, "%s,%s", latitude, longitude);
+			sendAtCommand(sendBuffer, strlen(sendBuffer));
+			command_sent = true;
+			strcpy(expectedResponse, "\r\nOK\r\n");
+			break;
+		case 5:
+			response_ready = false;
+			sendAtCommand("AT+HTTPACTION=1\r\n", strlen("AT+HTTPACTION=1\r\n"));
+			command_sent = true;
+			strcpy(expectedResponse, "\r\nOK\r\n\r\n+HTTPACTION: 1,200,");
 			break;
 		}
-		
+
 		/*Sent Test AT */
 
 	}
@@ -388,22 +406,25 @@ void HTTPrequestStateMachine() {
 		/* Send Call AT */
 		case 0:
 			transitionNextStateStep(HTTP_SEND, 1);
-			LED_RED_OFF
-			LED_PURPLE_ON
+
 			break;
 		case 1:
 			transitionNextStateStep(HTTP_SEND, 2);
-			LED_RED_OFF
-			LED_PURPLE_ON
+
 			break;
 		case 2:
 			transitionNextStateStep(HTTP_SEND, 3);
-			LED_RED_OFF
-			LED_PURPLE_ON
+
 			break;
 		case 3:
+			transitionNextStateStep(HTTP_SEND, 4);
+			break;
+		case 4:
+			transitionNextStateStep(HTTP_SEND, 5);
+			break;
+		case 5:
 			transitionNextStateStep(IDLE, 0);
-			LED_RED_OFF
+			LED_ALL_OFF
 			LED_PURPLE_ON
 			break;
 
@@ -464,80 +485,89 @@ void callPhoneStateMachine() {
 	}
 }
 
-void startupStateMachine()
-{
+void startupStateMachine() {
 	/* Not waiting for a command response  */
-		if (!command_sent) {
-			switch (state_step) {
-			case 0:
-				/* Change LED Color */
-				LED_PURPLE_OFF
-				LED_BLUE_ON
-				response_ready = false;
-				sendAtCommand("ATE0\r\n", strlen("ATE0\r\n"));
-				command_sent = true;
-				break;
-			case 1:
-				/* Change LED Color */
-				LED_PURPLE_OFF
-				LED_BLUE_ON
-				response_ready = false;
-				sendAtCommand("AT+CGNSPWR=1\r\n", strlen("AT+CGNSPWR=1\r\n"));
-				command_sent = true;
-				break;
-			case 2:
-				/* Change LED Color */
-				LED_PURPLE_OFF
-				LED_BLUE_ON
-				response_ready = false;
-				sendAtCommand("AT+HTTPTERM\r\n", strlen("AT+HTTPTERM\r\n"));
-				command_sent = true;
-				break;
-			case 3:
-				/* Change LED Color */
-				LED_PURPLE_OFF
-				LED_BLUE_ON
-				response_ready = false;
-				sendAtCommand("AT+HTTPINIT\r\n", strlen("AT+HTTPINIT\r\n"));
-				command_sent = true;
-				break;
-			
-			}
-			/*Sent Test AT */
+	if (!command_sent) {
+		switch (state_step) {
+		case 0:
+			/* Change LED Color */
+			LED_ALL_OFF
+			LED_BLUE_ON
+			response_ready = false;
+			sendAtCommand("ATE0\r\n", strlen("ATE0\r\n"));
+			command_sent = true;
+			break;
+		case 1:
+
+			response_ready = false;
+			sendAtCommand("AT+CGNSPWR=1\r\n", strlen("AT+CGNSPWR=1\r\n"));
+			command_sent = true;
+			break;
+		case 2:
+			response_ready = false;
+			sendAtCommand("AT+SAPBR=3,1,\"Contype\",\"GPRS\"\r\n",
+					strlen("AT+SAPBR=3,1,\"Contype\",\"GPRS\"\r\n"));
+			command_sent = true;
+			break;
+		case 3:
+			response_ready = false;
+			sendAtCommand("AT+SAPBR=3,1,\"APN\",\"orangeworld\"\r\n",
+					strlen("AT+SAPBR=3,1,\"APN\",\"orangeworld\"\r\n"));
+			command_sent = true;
+			break;
+		case 4:
+			response_ready = false;
+			sendAtCommand("AT+SAPBR=1,1\r\n", strlen("AT+SAPBR=1,1\r\n"));
+			command_sent = true;
+			break;
+		case 5:
+			response_ready = false;
+			sendAtCommand("AT+SAPBR=2,1\r\n", strlen("AT+SAPBR=2,1\r\n"));
+			command_sent = true;
+			break;
+		case 6:
+			response_ready = false;
+			sendAtCommand("AT+HTTPINIT\r\n", strlen("AT+HTTPINIT\r\n"));
+			command_sent = true;
+			break;
 
 		}
-		/* Response available */
-		if (response_ready) {
-			switch (state_step) {
-			/* Send Call AT */
-			case 0:
-				/*Return to IDLE */
-				transitionNextStateStep(STARTUP, 1);
-				LED_BLUE_OFF
-				LED_PURPLE_ON
-				break;
-			case 1:
-				/*Return to IDLE */
-				transitionNextStateStep(STARTUP, 2);
-				LED_BLUE_OFF
-				LED_PURPLE_ON
-				break;
-			case 2:
-				/*Return to IDLE */
-				transitionNextStateStep(STARTUP, 3);
-				LED_BLUE_OFF
-				LED_PURPLE_ON
-				break;
-			case 3:
-				/*Return to IDLE */
-				transitionNextStateStep(IDLE, 0);
-				LED_BLUE_OFF
-				LED_PURPLE_ON
-				break;
+		/*Sent Test AT */
 
-			}
+	}
+	/* Response available */
+	if (response_ready) {
+		switch (state_step) {
+		/* Send Call AT */
+		case 0:
+			transitionNextStateStep(STARTUP, 1);
+			break;
+		case 1:
+			transitionNextStateStep(STARTUP, 2);
+			break;
+		case 2:
+			transitionNextStateStep(STARTUP, 3);
+			break;
+		case 3:
+			transitionNextStateStep(STARTUP, 4);
+			break;
+		case 4:
+			transitionNextStateStep(STARTUP, 5);
+			break;
+		case 5:
+			transitionNextStateStep(STARTUP, 6);
+			break;
+		case 6:
+			/*Return to IDLE */
+			transitionNextStateStep(IDLE, 0);
+			LED_ALL_OFF
+			LED_PURPLE_ON
+			break;
+
 		}
+	}
 }
+
 int main(void) {
 	/*Init I2C and LED */
 	Led_and_Accel_Init();
@@ -547,7 +577,7 @@ int main(void) {
 	/* String searched in each response. 
 	 * Can be changed for example by > when you have to write a SMS.*/
 	strcpy(expectedResponse, "\r\nOK\r\n");
-	
+
 	while (1) {
 		switch (state) {
 		case STARTUP:
@@ -566,6 +596,12 @@ int main(void) {
 			HTTPrequestStateMachine();
 			break;
 		case IDLE:
+			if (gps_state_counter == 0) {
+				transitionNextStateStep(GPS, 0);
+				gps_state_counter = CYCLES_SEC * 30;
+			} else {
+				gps_state_counter--;
+			}
 		default:
 			/*Do nothing*/
 			break;
