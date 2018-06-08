@@ -17,21 +17,39 @@
 
 typedef int bool;
 
-#define true 1
-#define false 0
-#define BUFFER_SIZE 100
-#define CYCLES_SEC 500000
+#define true 			1
+#define false 			0
+#define BUFFER_SIZE 	255
+#define COORD_SIZE		16
+#define CYCLES_SEC 		500000
+
+//LED MACROS
 #define	LED_RED_ON	 	GPIOB_PCOR = (1 << 18);
 #define	LED_RED_OFF		GPIOB_PSOR |= (1 << 18);
+#define	LED_GREEN_ON	GPIOB_PCOR = (1 << 19);
+#define	LED_GREEN_OFF	GPIOB_PSOR |= (1 << 19);
 #define	LED_BLUE_ON    	GPIOD_PCOR = (1 << 1);
 #define	LED_BLUE_OFF  	GPIOD_PSOR |= (1 << 1);
+
+//LED COMBINED MACROS
+#define LED_YELLOW_ON	LED_RED_ON; LED_GREEN_ON;
+#define LED_YELLOW_OFF	LED_RED_OFF; LED_GREEN_OFF;
 #define	LED_PURPLE_ON  	LED_RED_ON; LED_BLUE_ON;
 #define	LED_PURPLE_OFF	LED_RED_OFF; LED_BLUE_OFF;
+#define LED_CIAN_ON		LED_GREEN_ON; LED_BLUE_ON;
+#define LED_CIAN_OFF	LED_GREEN_OFF; LED_BLUE_OFF;
+#define LED_WHITE_ON	LED_RED_ON; LED_GREEN_ON; LED_BLUE_ON;
+#define LED_WHITE_OFF	LED_RED_OFF; LED_GREEN_OFF; LED_BLUE_OFF;
 
-#define STARTUP 0u 
-#define IDLE 1u 
-#define SIGNAL 2u
-#define CALL	3u
+//LED ALL COLORS OFF
+#define LED_ALL_OFF		LED_RED_OFF; LED_GREEN_OFF; LED_BLUE_OFF;
+
+#define STARTUP 	0u 
+#define IDLE 		1u 
+#define SIGNAL 		2u
+#define CALL		3u
+#define GPS			4u
+#define HTTP_SEND	5u
 
 bool response_ready = false;
 bool command_sent = false;
@@ -49,6 +67,10 @@ int sendBufferPos = 0;
 char recvBuffer[BUFFER_SIZE] = "";
 int recvBufferSize = 0;
 int recvBufferPos = 0;
+
+bool new_gps_data = false;
+char *token;
+char latitude[COORD_SIZE] = "", longitude[COORD_SIZE] = "";
 
 // Interrupt enabling and disabling
 static inline void enable_irq(int n) {
@@ -79,8 +101,10 @@ void UART2_IRQHandler() {
 		recvBuffer[recvBufferPos] = UART2_D;
 		recvBufferPos++;
 		recvBufferSize++;
+		
 		if (strstr(recvBuffer, expectedResponse) != NULL) {
 			response_ready = true;
+			recvBuffer[recvBufferPos] = 'x';
 		}
 	}
 }
@@ -176,10 +200,14 @@ void Led_and_Accel_Init(void) {
 	SIM_SCGC5 |= SIM_SCGC5_PORTD_MASK;		// Turn on clock to Port D module	
 
 	PORTB_PCR18 |= PORT_PCR_MUX(0x1);	    // PTB18 is configured as GPIO
+	PORTB_PCR19 |= PORT_PCR_MUX(0x1);
 	PORTD_PCR1 |= PORT_PCR_MUX(0x1);
 
 	GPIOB_PDDR |= (1 << 18);		//Port Data Direction Register (GPIOx_PDDR)
+	GPIOB_PDDR |= (1 << 19);
 	GPIOD_PDDR |= (1 << 1);
+	
+	LED_ALL_OFF;
 }
 
 /******************************************************************************
@@ -218,9 +246,12 @@ void Accel_Config(void) {
  ******************************************************************************/
 void PORTA_IRQHandler() {
 	PORTA_PCR14 |= PORT_PCR_ISF_MASK;			// Clear the interrupt flag
-	state = CALL;
+	state = GPS;
 }
 
+/******************************************************************************
+ * State Machine Management
+ ******************************************************************************/
 
 void transitionNextStateStep(unsigned int next_state, unsigned int step) {
 	state = next_state;
@@ -262,6 +293,124 @@ void getSignalQualityStateMachine() {
 		}
 	}
 }
+
+void GPSrequestStateMachine() {
+	/* Not waiting for a command response  */
+	if (!command_sent) {
+		switch (state_step) {
+		case 0:
+			/* Change LED Color */
+			LED_PURPLE_OFF
+			LED_RED_ON
+			response_ready = false;
+			sendAtCommand("AT+CGNSINF\r\n", strlen("AT+CGNSINF\r\n"));
+			command_sent = true;
+			break;
+		}
+		/*Sent Test AT */
+
+	}
+	/* Response available */
+	if (response_ready) {
+		switch (state_step) {
+		/* Send Call AT */
+		case 0:
+			/*Return to IDLE */
+			token = strtok(recvBuffer, ",");
+			token = strtok(NULL, ",");
+			
+			if(atoi(token)){
+				token = strtok(NULL, ",");
+				token = strtok(NULL, ",");
+				strcpy(latitude, token);
+				token = strtok(NULL, ",");
+				strcpy(longitude, token);
+				new_gps_data = true;
+				transitionNextStateStep(HTTP_SEND, 0);
+			}else{
+				transitionNextStateStep(GPS, 0);
+			}
+			
+			LED_RED_OFF
+			LED_PURPLE_ON
+			break;
+
+		}
+	}
+}
+
+void HTTPrequestStateMachine() {
+	/* Not waiting for a command response  */
+	if (!command_sent) {
+		switch (state_step) {
+		case 0:
+			/* Change LED Color */
+			LED_PURPLE_OFF
+			LED_RED_ON
+			response_ready = false;
+			sendAtCommand("AT+HTTPPARA=\"CID\",1\r\n", strlen("AT+HTTPPARA=\"CID\",1\r\n"));
+			command_sent = true;
+			break;
+		case 1:
+					/* Change LED Color */
+			LED_PURPLE_OFF
+			LED_RED_ON
+			response_ready = false;
+			sendAtCommand("AT+HTTPPARA=\"URL\",\"http://ptsv2.com/t/frwfq-1528404493/post?SM=true\"\r\n", 
+						strlen("AT+HTTPPARA=\"URL\",\"http://ptsv2.com/t/frwfq-1528404493/post?SM=true\"\r\n"));
+			command_sent = true;
+			break;
+		case 2:
+			/* Change LED Color */
+			LED_PURPLE_OFF
+			LED_RED_ON
+			response_ready = false;
+			sendAtCommand("AT+HTTPACTION=0\r\n", strlen("AT+HTTPACTION=0\r\n"));
+			command_sent = true;
+			break;
+		case 3:
+			/* Change LED Color */
+			LED_PURPLE_OFF
+			LED_RED_ON
+			response_ready = false;
+			
+			sendAtCommand("AT+HTTPREAD\r\n", strlen("AT+HTTPREAD\r\n"));
+			command_sent = true;
+			break;
+		}
+		
+		/*Sent Test AT */
+
+	}
+	/* Response available */
+	if (response_ready) {
+		switch (state_step) {
+		/* Send Call AT */
+		case 0:
+			transitionNextStateStep(HTTP_SEND, 1);
+			LED_RED_OFF
+			LED_PURPLE_ON
+			break;
+		case 1:
+			transitionNextStateStep(HTTP_SEND, 2);
+			LED_RED_OFF
+			LED_PURPLE_ON
+			break;
+		case 2:
+			transitionNextStateStep(HTTP_SEND, 3);
+			LED_RED_OFF
+			LED_PURPLE_ON
+			break;
+		case 3:
+			transitionNextStateStep(IDLE, 0);
+			LED_RED_OFF
+			LED_PURPLE_ON
+			break;
+
+		}
+	}
+}
+
 void callPhoneStateMachine() {
 	/* Not waiting for a command response  */
 	if (!command_sent) {
@@ -328,6 +477,31 @@ void startupStateMachine()
 				sendAtCommand("ATE0\r\n", strlen("ATE0\r\n"));
 				command_sent = true;
 				break;
+			case 1:
+				/* Change LED Color */
+				LED_PURPLE_OFF
+				LED_BLUE_ON
+				response_ready = false;
+				sendAtCommand("AT+CGNSPWR=1\r\n", strlen("AT+CGNSPWR=1\r\n"));
+				command_sent = true;
+				break;
+			case 2:
+				/* Change LED Color */
+				LED_PURPLE_OFF
+				LED_BLUE_ON
+				response_ready = false;
+				sendAtCommand("AT+HTTPTERM\r\n", strlen("AT+HTTPTERM\r\n"));
+				command_sent = true;
+				break;
+			case 3:
+				/* Change LED Color */
+				LED_PURPLE_OFF
+				LED_BLUE_ON
+				response_ready = false;
+				sendAtCommand("AT+HTTPINIT\r\n", strlen("AT+HTTPINIT\r\n"));
+				command_sent = true;
+				break;
+			
 			}
 			/*Sent Test AT */
 
@@ -337,6 +511,24 @@ void startupStateMachine()
 			switch (state_step) {
 			/* Send Call AT */
 			case 0:
+				/*Return to IDLE */
+				transitionNextStateStep(STARTUP, 1);
+				LED_BLUE_OFF
+				LED_PURPLE_ON
+				break;
+			case 1:
+				/*Return to IDLE */
+				transitionNextStateStep(STARTUP, 2);
+				LED_BLUE_OFF
+				LED_PURPLE_ON
+				break;
+			case 2:
+				/*Return to IDLE */
+				transitionNextStateStep(STARTUP, 3);
+				LED_BLUE_OFF
+				LED_PURPLE_ON
+				break;
+			case 3:
 				/*Return to IDLE */
 				transitionNextStateStep(IDLE, 0);
 				LED_BLUE_OFF
@@ -366,6 +558,12 @@ int main(void) {
 			break;
 		case CALL:
 			callPhoneStateMachine();
+			break;
+		case GPS:
+			GPSrequestStateMachine();
+			break;
+		case HTTP_SEND:
+			HTTPrequestStateMachine();
 			break;
 		case IDLE:
 		default:
