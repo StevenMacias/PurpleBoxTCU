@@ -232,9 +232,9 @@ void Accel_Config(void) {
 	I2C_WriteRegister(MMA845x_I2C_ADDRESS, CTRL_REG2, 0x02);// High Resolution mode
 
 	I2C_WriteRegister(MMA845x_I2C_ADDRESS, PULSE_CFG_REG, 0x15); //Enable X, Y and Z Single Pulse
-	I2C_WriteRegister(MMA845x_I2C_ADDRESS, PULSE_THSX_REG, 0x10); //Set X Threshold to 2.016g
-	I2C_WriteRegister(MMA845x_I2C_ADDRESS, PULSE_THSY_REG, 0x10); //Set Y Threshold to 2.016g
-	I2C_WriteRegister(MMA845x_I2C_ADDRESS, PULSE_THSZ_REG, 0x10); //Set Z Threshold to 2.646g
+	I2C_WriteRegister(MMA845x_I2C_ADDRESS, PULSE_THSX_REG, 0x60); //Set X Threshold to 2.016g
+	I2C_WriteRegister(MMA845x_I2C_ADDRESS, PULSE_THSY_REG, 0x60); //Set Y Threshold to 2.016g
+	I2C_WriteRegister(MMA845x_I2C_ADDRESS, PULSE_THSZ_REG, 0x60); //Set Z Threshold to 2.646g
 	I2C_WriteRegister(MMA845x_I2C_ADDRESS, PULSE_TMLT_REG, 0xB0); //Set Time Limit for Tap Detection to 25 ms
 	I2C_WriteRegister(MMA845x_I2C_ADDRESS, PULSE_LTCY_REG, 0xC0); //Set Latency Time to 50 ms
 	I2C_WriteRegister(MMA845x_I2C_ADDRESS, CTRL_REG4, 0x08); //Pulse detection interrupt enabled
