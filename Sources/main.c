@@ -20,6 +20,7 @@ typedef int bool;
 #define true 			1
 #define false 			0
 #define BUFFER_SIZE 	255
+#define RECV_BUFFER_SIZE 2048
 #define COORD_SIZE		16
 #define CYCLES_SEC 		500000
 
@@ -64,9 +65,12 @@ char sendBuffer[BUFFER_SIZE] = "";
 int sendBufferSize = 0;
 int sendBufferPos = 0;
 
-char recvBuffer[BUFFER_SIZE] = "";
+char recvBuffer[RECV_BUFFER_SIZE] = "";
 int recvBufferSize = 0;
 int recvBufferPos = 0;
+
+char jsonBuffer[BUFFER_SIZE] = ""; 
+int jsonBuffer_size = 0;
 
 bool new_gps_data = false;
 char *token;
@@ -97,7 +101,7 @@ void UART2_IRQHandler() {
 	status = UART2_S1;
 	// If there is received data, read it into the receive buffer.  If the
 	// buffer is full, disable the receive interrupt.
-	if ((status & UART_S1_RDRF_MASK) && recvBufferSize != BUFFER_SIZE) {
+	if ((status & UART_S1_RDRF_MASK) && recvBufferSize != RECV_BUFFER_SIZE) {
 		recvBuffer[recvBufferPos] = UART2_D;
 		recvBufferPos++;
 		recvBufferSize++;
@@ -260,7 +264,7 @@ void transitionNextStateStep(unsigned int next_state, unsigned int step) {
 	state_step = step;
 	recvBufferPos = 0;
 	recvBufferSize = 0;
-	cleanBuffer(recvBuffer, BUFFER_SIZE);
+	cleanBuffer(recvBuffer, RECV_BUFFER_SIZE);
 	strcpy(expectedResponse, "\r\nOK\r\n");
 }
 
@@ -357,9 +361,9 @@ void HTTPrequestStateMachine() {
 
 			response_ready = false;
 			sendAtCommand(
-					"AT+HTTPPARA=\"URL\",\"http://ptsv2.com/t/9gt8l-1528492807/post\"\r\n",
+					"AT+HTTPPARA=\"URL\",\"http://purplebox.000webhostapp.com/saveGpsFrame\"\r\n",
 					strlen(
-							"AT+HTTPPARA=\"URL\",\"http://ptsv2.com/t/9gt8l-1528492807/post\"\r\n"));
+							"AT+HTTPPARA=\"URL\",\"http://purplebox.000webhostapp.com/saveGpsFrame\"\r\n"));
 			command_sent = true;
 			break;
 		case 2:
@@ -370,22 +374,21 @@ void HTTPrequestStateMachine() {
 			command_sent = true;
 			break;
 		case 3:
-
+			
 			response_ready = false;
-			int latitude_size = strlen(latitude);
-			int longitude_size = strlen(longitude);
 			cleanBuffer(sendBuffer, BUFFER_SIZE);
+			cleanBuffer(jsonBuffer, BUFFER_SIZE);
+			sprintf(jsonBuffer, "{\"latitude\":%s,\"longitude\":%s}", latitude, longitude);
+			jsonBuffer_size = strlen(jsonBuffer);
 			sprintf(sendBuffer, "AT+HTTPDATA=%d,10000\r\n",
-					(latitude_size + longitude_size));
+					jsonBuffer_size);
 			sendAtCommand(sendBuffer, strlen(sendBuffer));
 			command_sent = true;
 			strcpy(expectedResponse, "DOWNLOAD");
 			break;
 		case 4:
 			response_ready = false;
-			cleanBuffer(sendBuffer, BUFFER_SIZE);
-			sprintf(sendBuffer, "%s,%s", latitude, longitude);
-			sendAtCommand(sendBuffer, strlen(sendBuffer));
+			sendAtCommand(jsonBuffer, jsonBuffer_size);
 			command_sent = true;
 			strcpy(expectedResponse, "\r\nOK\r\n");
 			break;
@@ -393,7 +396,12 @@ void HTTPrequestStateMachine() {
 			response_ready = false;
 			sendAtCommand("AT+HTTPACTION=1\r\n", strlen("AT+HTTPACTION=1\r\n"));
 			command_sent = true;
-			strcpy(expectedResponse, "\r\nOK\r\n\r\n+HTTPACTION: 1,200,");
+			strcpy(expectedResponse, "\r\nOK\r\n\r\n+HTTPACTION: 1,");
+			break;
+		case 6:
+			sendAtCommand("AT+HTTPREAD\r\n", strlen("AT+HTTPREAD\r\n"));
+			command_sent = true;
+			strcpy(expectedResponse, "\r\nOK\r\n");
 			break;
 		}
 
@@ -423,6 +431,9 @@ void HTTPrequestStateMachine() {
 			transitionNextStateStep(HTTP_SEND, 5);
 			break;
 		case 5:
+			transitionNextStateStep(HTTP_SEND, 6);
+			break;
+		case 6:
 			transitionNextStateStep(IDLE, 0);
 			LED_ALL_OFF
 			LED_PURPLE_ON
