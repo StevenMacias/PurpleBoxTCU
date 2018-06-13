@@ -1,15 +1,22 @@
-/* p4_4.c UART2 echo
- * This program receives a character from UART2 receiver
- * then sends it back through UART2.
- * The bus clock is set to 13.98 MHz in SystemInit().
- * Baud rate = bus clock / BDH:BDL / 16 = 9600
- * A terminal emulator (TeraTerm) should be launched
- * on the host PC. Typing on the PC keyboard sends
- * characters to the FRDM board. The FRDM board echoes
- * the character back to the terminal emulator.
- * The UART2 transmit line is connected to PTD5.
- * The UART2 receive line is connected to PTD4.
- */
+/******************************************************************************
+ * Embedded System Program made as an assignment for Microprocessors and
+ * Peripherals subject.
+ * 
+ * The system baptized as PurpleBox TCU is programmed as a state machine.
+ * 
+ * The components used for the project are a SIM808 development platform and
+ * the NXP FRDM-KL25z development platform.
+ * 
+ * PurpleBox TCU sends the GPS Location every x seconds and calls a predefined
+ * phone number if an abrupt movement is detected.
+ * 
+ * This project was created by Steven Macías and  Lorenzo Hidalgo,
+ * students at the Autonomous University of Barcelona, and is available at
+ * the following repository: https://github.com/StevenMacias/PurpleBoxTCU
+ * 
+ * For more information visit www.purplebox.tk 
+ ******************************************************************************/
+
 #include "derivative.h" /* include peripheral declarations */
 #include "I2C.h"
 #include "MMA8451Q.h"
@@ -17,6 +24,9 @@
 
 typedef int bool;
 
+/******************************************************************************
+ * GLOBAL VARIABLES
+ ******************************************************************************/
 #define true 			1
 #define false 			0
 #define BUFFER_SIZE 	255
@@ -24,7 +34,11 @@ typedef int bool;
 #define COORD_SIZE		16
 #define CYCLES_SEC 		500000
 
-//LED MACROS
+
+/******************************************************************************
+ * LED CONFIGURATION MACROS
+ ******************************************************************************/
+//RGB MACROS
 #define	LED_RED_ON	 	GPIOB_PCOR = (1 << 18);
 #define	LED_RED_OFF		GPIOB_PSOR |= (1 << 18);
 #define	LED_GREEN_ON	GPIOB_PCOR = (1 << 19);
@@ -32,7 +46,7 @@ typedef int bool;
 #define	LED_BLUE_ON    	GPIOD_PCOR = (1 << 1);
 #define	LED_BLUE_OFF  	GPIOD_PSOR |= (1 << 1);
 
-//LED COMBINED MACROS
+//COMBINED COLORS MACROS
 #define LED_YELLOW_ON	LED_RED_ON; LED_GREEN_ON;
 #define LED_YELLOW_OFF	LED_RED_OFF; LED_GREEN_OFF;
 #define	LED_PURPLE_ON  	LED_RED_ON; LED_BLUE_ON;
@@ -45,6 +59,11 @@ typedef int bool;
 //LED ALL COLORS OFF
 #define LED_ALL_OFF		LED_RED_OFF; LED_GREEN_OFF; LED_BLUE_OFF;
 
+
+/******************************************************************************
+ * SM GLOBAL VARIABLES
+ ******************************************************************************/
+//SM STATES
 #define STARTUP 	0u 
 #define IDLE 		1u 
 #define SIGNAL 		2u
@@ -52,6 +71,7 @@ typedef int bool;
 #define GPS			4u
 #define HTTP_SEND	5u
 
+//SM VARIABLES
 bool response_ready = false;
 bool command_sent = false;
 unsigned int state_step = 0u;
@@ -60,42 +80,65 @@ unsigned int gps_state_counter = CYCLES_SEC * 5;
 char expectedResponse[BUFFER_SIZE] = "";
 unsigned int state = STARTUP;
 
+
+/******************************************************************************
+ * COMMUNICATION BUFFERS
+ ******************************************************************************/
+//SEND BUFFER
 unsigned char PULSE_SRC_val = 0;
 char sendBuffer[BUFFER_SIZE] = "";
 int sendBufferSize = 0;
 int sendBufferPos = 0;
 
+//RECIEVE BUFFER
 char recvBuffer[RECV_BUFFER_SIZE] = "";
 int recvBufferSize = 0;
 int recvBufferPos = 0;
 
+//JSON BUFFER FOR HTTP REQUEST
 char jsonBuffer[BUFFER_SIZE] = ""; 
 int jsonBuffer_size = 0;
 
+//GPS GLOBAL VARIABLES
 bool new_gps_data = false;
 char *token;
 char latitude[COORD_SIZE] = "", longitude[COORD_SIZE] = "";
 
-// Interrupt enabling and disabling
+
+/******************************************************************************
+ * INTERRUPTION HANDLERS
+ ******************************************************************************/
+// INTERRUPTION ENABLE AND DISABLE
 static inline void enable_irq(int n) {
 	NVIC_ICPR |= 1 << (n - 16);
 	NVIC_ISER |= 1 << (n - 16);
 }
-// TODO:  IRQ disable
 
+//ENABLE INTERRUPTIONS
 static inline void __enable_irq(void) {
 	asm volatile ("cpsie i");
 }
+
+//DISABLE INTERRUPTIONS
 static inline void __disable_irq(void) {
 	asm volatile ("cpsid i");
 }
 
+
+/******************************************************************************
+ * FUNCTION TO SET ALL POSITIONS OF A BUFFER TO \0
+ ******************************************************************************/
 void cleanBuffer(char* buffer, unsigned int buff_size) {
 	int i;
 	for (i = 0; i < buff_size; i++) {
 		buffer[i] = '\0';
 	}
 }
+
+
+/******************************************************************************
+ * UART2 INTERRUPTION HANDLER
+ ******************************************************************************/
 void UART2_IRQHandler() {
 	int status;
 	status = UART2_S1;
@@ -112,6 +155,10 @@ void UART2_IRQHandler() {
 	}
 }
 
+
+/******************************************************************************
+ * FUNCTION TO SEND AT COMMANDS VIA UART2
+ ******************************************************************************/
 void sendAtCommand(char* message, unsigned int len) {
 	unsigned int i;
 	strcpy(sendBuffer, message);
@@ -122,7 +169,10 @@ void sendAtCommand(char* message, unsigned int len) {
 	}
 }
 
-/* initialize UART2 to transmit and receive at 9600 Baud */
+
+/******************************************************************************
+ * UART2 INITIALIZATION FUNCTION - 9600 BAUD
+ ******************************************************************************/
 void UART2_init(void) {
 	SIM_SCGC4 |= 0x1000; /* enable clock to UART2 */
 	UART2_C2 = 0; /* disable UART during configuration */
@@ -137,13 +187,14 @@ void UART2_init(void) {
 	PORTD_PCR5 = 0x300; /* PTD5 for UART2 transmit */
 	PORTD_PCR4 = 0x300; /* PTD5 for UART2 receive */
 
-	/*PORTD_PCR4 |= (0|PORT_PCR_ISF_MASK|	// Clear the interrupt flag 
-	 PORT_PCR_MUX(0x3)|// PTA14 is configured as GPIO 
-	 PORT_PCR_IRQC(0xA));// PTA14 is configured for falling edge interrupts */
 	//enable_irq(INT_PORTD);
 	enable_irq(INT_UART2);
 }
 
+
+/******************************************************************************
+ * FUNCTION TO INITIALIZE THE SIM808 DEVELOPMENT PLATFORM
+ ******************************************************************************/
 void initRoutine() {
 	SIM_COPC = 0x00U;
 	SIM_SCGC5 |= SIM_SCGC5_PORTA_MASK; /* Enable clock gate for ports to enable pin routing */
@@ -176,8 +227,9 @@ void initRoutine() {
 	}
 }
 
+
 /******************************************************************************
- * MCU initialization function
+ * FUNCTION TO INITIALIZE RGB LED AND ACCELEROMETER
  ******************************************************************************/
 void Led_and_Accel_Init(void) {
 	//I2C0 module initialization
@@ -214,8 +266,18 @@ void Led_and_Accel_Init(void) {
 	;
 }
 
+
 /******************************************************************************
- * Accelerometer initialization function
+ * PORT A INTERRUPTION HANDLER
+ ******************************************************************************/
+void PORTA_IRQHandler() {
+	PORTA_PCR14 |= PORT_PCR_ISF_MASK;			// Clear the interrupt flag
+	state = CALL;
+}
+
+
+/******************************************************************************
+ * FUNCTION TO CONFIGURE THE MMA845x ACCELEROMETER
  ******************************************************************************/
 void Accel_Config(void) {
 	unsigned char reg_val = 0, CTRL_REG1_val = 0;
@@ -245,18 +307,10 @@ void Accel_Config(void) {
 	I2C_WriteRegister(MMA845x_I2C_ADDRESS, CTRL_REG1, CTRL_REG1_val);
 }
 
-/******************************************************************************
- * PORT A Interrupt handler
- ******************************************************************************/
-void PORTA_IRQHandler() {
-	PORTA_PCR14 |= PORT_PCR_ISF_MASK;			// Clear the interrupt flag
-	state = CALL;
-}
 
 /******************************************************************************
- * State Machine Management
+ * SM STATE TRANSITION FUNCTION
  ******************************************************************************/
-
 void transitionNextStateStep(unsigned int next_state, unsigned int step) {
 	state = next_state;
 	command_sent = false;
@@ -268,12 +322,16 @@ void transitionNextStateStep(unsigned int next_state, unsigned int step) {
 	strcpy(expectedResponse, "\r\nOK\r\n");
 }
 
+
+/******************************************************************************
+ * SM STATE - SIGNAL QUALITY HANDLER
+ ******************************************************************************/
 void getSignalQualityStateMachine() {
-	/* Not waiting for a command response  */
+	// ENTERS IF THE SM ISN'T WAITING FOR A RESPONSE
 	if (!command_sent) {
 		switch (state_step) {
 		case 0:
-			/* Change LED Color */
+			// SIGNAL QUALITY REQUEST
 			LED_PURPLE_OFF
 			LED_RED_ON
 			response_ready = false;
@@ -281,15 +339,14 @@ void getSignalQualityStateMachine() {
 			command_sent = true;
 			break;
 		}
-		/*Sent Test AT */
-
 	}
-	/* Response available */
+	
+	// ENTERS IF A RESPONSE IS AVAILABLE - UART2 INTERRUPTION
 	if (response_ready) {
 		switch (state_step) {
-		/* Send Call AT */
+		// TRANSITION HANDLER BETWEEN SM FUNCTIONS
 		case 0:
-			/*Return to IDLE */
+			// RETURNS TO IDLE STATE - LED PURPLE
 			transitionNextStateStep(IDLE, 0);
 			LED_RED_OFF
 			LED_PURPLE_ON
@@ -299,12 +356,16 @@ void getSignalQualityStateMachine() {
 	}
 }
 
+
+/******************************************************************************
+ * SM STATE - GPS SIGNAL HANDLING - LED YELLOW
+ ******************************************************************************/
 void GPSrequestStateMachine() {
-	/* Not waiting for a command response  */
+	// ENTERS IF THE SM ISN'T WAITING FOR A RESPONSE
 	if (!command_sent) {
 		switch (state_step) {
 		case 0:
-			/* Change LED Color */
+			// GPS POSITION REQUEST - LED COLOR YELLOW
 			LED_ALL_OFF
 			LED_YELLOW_ON
 			response_ready = false;
@@ -312,19 +373,18 @@ void GPSrequestStateMachine() {
 			command_sent = true;
 			break;
 		}
-		/*Sent Test AT */
-
 	}
-	/* Response available */
+	
+	// ENTERS IF A RESPONSE IS AVAILABLE - UART2 INTERRUPTION
 	if (response_ready) {
 		switch (state_step) {
-		/* Send Call AT */
+		// TRANSITION HANDLER BETWEEN SM FUNCTIONS
 		case 0:
-			/*Return to IDLE */
 			token = strtok(recvBuffer, ",");
 			token = strtok(NULL, ",");
 
 			if (atoi(token)) {
+				// POSITION FIXED - SEND HTTP REQ
 				token = strtok(NULL, ",");
 				token = strtok(NULL, ",");
 				strcpy(latitude, token);
@@ -333,9 +393,10 @@ void GPSrequestStateMachine() {
 				new_gps_data = true;
 				transitionNextStateStep(HTTP_SEND, 0);
 			} else {
+				// POSITION NOT FIXED - BACK TO IDLE
 				transitionNextStateStep(IDLE, 0);
 			}
-
+			// LED COLOR PURPLE
 			LED_ALL_OFF
 			LED_PURPLE_ON
 			break;
@@ -344,12 +405,15 @@ void GPSrequestStateMachine() {
 	}
 }
 
+/******************************************************************************
+ * SM STATE - HTTP COMMUNICATION HANDLING - LED CYAN
+ ******************************************************************************/
 void HTTPrequestStateMachine() {
-	/* Not waiting for a command response  */
+	// ENTERS IF THE SM ISN'T WAITING FOR A RESPONSE
 	if (!command_sent) {
 		switch (state_step) {
 		case 0:
-			/* Change LED Color */
+			// HTTP REQUEST PARAMETERS - CID - LED COLOR CYAN
 			LED_ALL_OFF
 			LED_CIAN_ON
 			response_ready = false;
@@ -358,7 +422,7 @@ void HTTPrequestStateMachine() {
 			command_sent = true;
 			break;
 		case 1:
-
+			// HTTP REQUEST PARAMETERS - URL
 			response_ready = false;
 			sendAtCommand(
 					"AT+HTTPPARA=\"URL\",\"http://purplebox.000webhostapp.com/saveGpsFrame\"\r\n",
@@ -367,14 +431,14 @@ void HTTPrequestStateMachine() {
 			command_sent = true;
 			break;
 		case 2:
-
+			// HTTP REQUEST PARAMETERS - CONTENT
 			response_ready = false;
 			sendAtCommand("AT+HTTPPARA=\"CONTENT\",\"application/json\"\r\n",
 					strlen("AT+HTTPPARA=\"CONTENT\",\"application/json\"\r\n"));
 			command_sent = true;
 			break;
 		case 3:
-			
+			// PREPARES THE JSON BUFFER
 			response_ready = false;
 			cleanBuffer(sendBuffer, BUFFER_SIZE);
 			cleanBuffer(jsonBuffer, BUFFER_SIZE);
@@ -387,42 +451,40 @@ void HTTPrequestStateMachine() {
 			strcpy(expectedResponse, "DOWNLOAD");
 			break;
 		case 4:
+			// SENDS THE JSON BUFFER
 			response_ready = false;
 			sendAtCommand(jsonBuffer, jsonBuffer_size);
 			command_sent = true;
 			strcpy(expectedResponse, "\r\nOK\r\n");
 			break;
 		case 5:
+			// SENDS HTTP REQUEST
 			response_ready = false;
 			sendAtCommand("AT+HTTPACTION=1\r\n", strlen("AT+HTTPACTION=1\r\n"));
 			command_sent = true;
 			strcpy(expectedResponse, "\r\nOK\r\n\r\n+HTTPACTION: 1,");
 			break;
 		case 6:
+			// READS HTTP RESPONSE
 			sendAtCommand("AT+HTTPREAD\r\n", strlen("AT+HTTPREAD\r\n"));
 			command_sent = true;
 			strcpy(expectedResponse, "\r\nOK\r\n");
 			break;
 		}
-
-		/*Sent Test AT */
-
 	}
-	/* Response available */
+	
+	// ENTERS IF A RESPONSE IS AVAILABLE - UART2 INTERRUPTION
 	if (response_ready) {
 		switch (state_step) {
-		/* Send Call AT */
+		// TRANSITION HANDLER BETWEEN SM FUNCTIONS
 		case 0:
 			transitionNextStateStep(HTTP_SEND, 1);
-
 			break;
 		case 1:
 			transitionNextStateStep(HTTP_SEND, 2);
-
 			break;
 		case 2:
 			transitionNextStateStep(HTTP_SEND, 3);
-
 			break;
 		case 3:
 			transitionNextStateStep(HTTP_SEND, 4);
@@ -434,6 +496,7 @@ void HTTPrequestStateMachine() {
 			transitionNextStateStep(HTTP_SEND, 6);
 			break;
 		case 6:
+			// RETURNS TO IDLE STATE - LED PURPLE
 			transitionNextStateStep(IDLE, 0);
 			LED_ALL_OFF
 			LED_PURPLE_ON
@@ -443,12 +506,16 @@ void HTTPrequestStateMachine() {
 	}
 }
 
+
+/******************************************************************************
+ * SM STATE - CELLPHONE CALL HANDLING - LED RED
+ ******************************************************************************/
 void callPhoneStateMachine() {
-	/* Not waiting for a command response  */
+	// ENTERS IF THE SM ISN'T WAITING FOR A RESPONSE
 	if (!command_sent) {
 		switch (state_step) {
 		case 0:
-			/* Change LED Color */
+			// CHECKS SIM808 AVAILABILITY - LED COLOR RED
 			LED_PURPLE_OFF
 			LED_RED_ON
 			response_ready = false;
@@ -456,29 +523,30 @@ void callPhoneStateMachine() {
 			command_sent = true;
 			break;
 		case 1:
+			// CALLS A NUMBER AND WAITS FOR 10 SECONDS
 			response_ready = false;
 			sendAtCommand("ATDXXXXXXXXX;\r\n", strlen("ATDXXXXXXXXX;\r\n"));
 			delay_state_counter = CYCLES_SEC * 10; /*10 secs */
 			command_sent = true;
 			break;
 		case 2:
+			// HANG UP THE CALL
 			response_ready = false;
 			sendAtCommand("ATH\r\n", strlen("ATH\r\n"));
 			command_sent = true;
 			break;
 		}
-		/*Sent Test AT */
-
 	}
-	/* Response available */
+	
+	// ENTERS IF A RESPONSE IS AVAILABLE - UART2 INTERRUPTION
 	if (response_ready) {
 		switch (state_step) {
-		/* Send Call AT */
+		// TRANSITION HANDLER BETWEEN SM FUNCTIONS
 		case 0:
 			transitionNextStateStep(CALL, 1);
 			break;
 		case 1:
-			/* Delay */
+			// DELAY HANDLER
 			if (delay_state_counter == 0) {
 				transitionNextStateStep(CALL, 2);
 			} else {
@@ -486,7 +554,7 @@ void callPhoneStateMachine() {
 			}
 			break;
 		case 2:
-			/*Return to IDLE */
+			// RETURNS TO IDLE STATE - LED PURPLE
 			transitionNextStateStep(IDLE, 0);
 			LED_RED_OFF
 			LED_PURPLE_ON
@@ -496,12 +564,16 @@ void callPhoneStateMachine() {
 	}
 }
 
+
+/******************************************************************************
+ * SM STATE - STARTUP HANDLING - LED BLUE
+ ******************************************************************************/
 void startupStateMachine() {
-	/* Not waiting for a command response  */
+	// ENTERS IF THE SM ISN'T WAITING FOR A RESPONSE
 	if (!command_sent) {
 		switch (state_step) {
 		case 0:
-			/* Change LED Color */
+			// SET LED COLOR TO BLUE
 			LED_ALL_OFF
 			LED_BLUE_ON
 			response_ready = false;
@@ -509,47 +581,52 @@ void startupStateMachine() {
 			command_sent = true;
 			break;
 		case 1:
-
+			// GNS POWERING
 			response_ready = false;
 			sendAtCommand("AT+CGNSPWR=1\r\n", strlen("AT+CGNSPWR=1\r\n"));
 			command_sent = true;
 			break;
 		case 2:
+			// BEARER SETTINGS FOR IP BASED APPLICATIONS
 			response_ready = false;
 			sendAtCommand("AT+SAPBR=3,1,\"Contype\",\"GPRS\"\r\n",
 					strlen("AT+SAPBR=3,1,\"Contype\",\"GPRS\"\r\n"));
 			command_sent = true;
 			break;
 		case 3:
+			// BEARER SETTINGS FOR IP BASED APPLICATIONS
 			response_ready = false;
 			sendAtCommand("AT+SAPBR=3,1,\"APN\",\"orangeworld\"\r\n",
 					strlen("AT+SAPBR=3,1,\"APN\",\"orangeworld\"\r\n"));
 			command_sent = true;
 			break;
 		case 4:
+			// BEARER SETTINGS FOR IP BASED APPLICATIONS
 			response_ready = false;
 			sendAtCommand("AT+SAPBR=1,1\r\n", strlen("AT+SAPBR=1,1\r\n"));
 			command_sent = true;
 			break;
 		case 5:
+			// BEARER SETTINGS FOR IP BASED APPLICATIONS
 			response_ready = false;
 			sendAtCommand("AT+SAPBR=2,1\r\n", strlen("AT+SAPBR=2,1\r\n"));
 			command_sent = true;
 			break;
 		case 6:
+			// HTTP MODULE INITIALIZATION
 			response_ready = false;
 			sendAtCommand("AT+HTTPINIT\r\n", strlen("AT+HTTPINIT\r\n"));
 			command_sent = true;
 			break;
 
 		}
-		/*Sent Test AT */
 
 	}
-	/* Response available */
+	
+	// ENTERS IF A RESPONSE IS AVAILABLE - UART2 INTERRUPTION
 	if (response_ready) {
 		switch (state_step) {
-		/* Send Call AT */
+		// TRANSITION HANDLER BETWEEN SM FUNCTIONS
 		case 0:
 			transitionNextStateStep(STARTUP, 1);
 			break;
@@ -569,7 +646,7 @@ void startupStateMachine() {
 			transitionNextStateStep(STARTUP, 6);
 			break;
 		case 6:
-			/*Return to IDLE */
+			// RETURNS TO IDLE STATE - LED PURPLE
 			transitionNextStateStep(IDLE, 0);
 			LED_ALL_OFF
 			LED_PURPLE_ON
@@ -579,12 +656,17 @@ void startupStateMachine() {
 	}
 }
 
+
+/******************************************************************************
+ * MAIN FUNCTION
+ ******************************************************************************/
 int main(void) {
-	/*Init I2C and LED */
+	// COMPONENT INITIALIZATIONS
 	Led_and_Accel_Init();
 	Accel_Config();
 	initRoutine();
 	UART2_init();
+	
 	/* String searched in each response. 
 	 * Can be changed for example by > when you have to write a SMS.*/
 	strcpy(expectedResponse, "\r\nOK\r\n");
@@ -592,29 +674,34 @@ int main(void) {
 	while (1) {
 		switch (state) {
 		case STARTUP:
+			// SM STARTUP PROCEDURE
 			startupStateMachine();
 			break;
 		case SIGNAL:
+			// SIGNAL QUALITY 
 			getSignalQualityStateMachine();
 			break;
 		case CALL:
+			// CALL
 			callPhoneStateMachine();
 			break;
 		case GPS:
+			// REQUEST GPS POSITION
 			GPSrequestStateMachine();
 			break;
 		case HTTP_SEND:
+			// SEND HTTP REQUEST
 			HTTPrequestStateMachine();
 			break;
 		case IDLE:
+			// COUNTDOWN FOR NEW GPS REQUEST
 			if (gps_state_counter == 0) {
 				transitionNextStateStep(GPS, 0);
-				gps_state_counter = CYCLES_SEC * 30;
+				gps_state_counter = CYCLES_SEC * 5;
 			} else {
 				gps_state_counter--;
 			}
 		default:
-			/*Do nothing*/
 			break;
 		}
 	}
