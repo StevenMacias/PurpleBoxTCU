@@ -10,7 +10,7 @@
  * PurpleBox TCU sends the GPS Location every x seconds and calls a predefined
  * phone number if an abrupt movement is detected.
  * 
- * This project was created by Steven Macías and  Lorenzo Hidalgo,
+ * This project was created by Steven MacÃ­as and  Lorenzo Hidalgo,
  * students at the Autonomous University of Barcelona, and is available at
  * the following repository: https://github.com/StevenMacias/PurpleBoxTCU
  * 
@@ -525,7 +525,7 @@ void callPhoneStateMachine() {
 		case 1:
 			// CALLS A NUMBER AND WAITS FOR 10 SECONDS
 			response_ready = false;
-			sendAtCommand("ATDXXXXXXXXX;\r\n", strlen("ATDXXXXXXXXX;\r\n"));
+			sendAtCommand("ATD6XXXXXXXX;\r\n", strlen("ATD6XXXXXXXX;\r\n"));
 			delay_state_counter = CYCLES_SEC * 10; /*10 secs */
 			command_sent = true;
 			break;
