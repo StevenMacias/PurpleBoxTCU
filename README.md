@@ -1,17 +1,19 @@
 # PurpleBoxTCU
-Embedded System Program made as an assignment for Microprocessors and
+Embedded System Project made as an assignment for Microprocessors and
 Peripherals subject.
 
-The system baptized as PurpleBox TCU is programmed as a state machine.
+The system baptized as PurpleBox TCU is controlled by a simple state machine.
 
-The components used for the project are a SIM808 development platform and
-the NXP FRDM-KL25z development platform.
+The components used for the project are a SIM808 development kit and
+the NXP FRDM-KL25z microcontroller.
 
-PurpleBox TCU sends the GPS Location every x seconds and calls a predefined
+PurpleBox TCU sends the GPS Location every periodically  and calls a predefined
 phone number if an abrupt movement is detected.
   
 This project was created by Steven Macías and  Lorenzo Hidalgo,
-students at the Autonomous University of Barcelona, and is available at
+students at the Autonomous University of Barcelona, and it is available at
 the following repository: https://github.com/StevenMacias/PurpleBoxTCU
  
-For more information visit www.purplebox.tk 
+For more information visit www.purplebox.tk
+![alt text](http://www.purplebox.tk/startbootstrap-creative-gh-pages/img/header.jpg)
+ 
